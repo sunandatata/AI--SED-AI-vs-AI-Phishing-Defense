@@ -1,0 +1,8 @@
+{
+  "channels": ["email", "sms"],
+  "tactics": ["urgency", "authority", "scarcity", "reciprocity", "fear", "curiosity"],
+  "curriculum": ["template", "paraphrase", "obfuscation"],
+  "round_size": 100,
+  "blue_threshold": 0.5,
+  "red_model": "t5" 
+}
