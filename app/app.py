@@ -132,6 +132,15 @@ def load_t5_cached():
         return (t, m)
     except Exception: return None
 
+def eval_predict(texts, model_type: str):
+    """Generates phishing probabilities using the selected model."""
+    if model_type == "baseline":
+        model = load_baseline()
+        return model.predict_proba(texts)[:, 1]
+    else:
+        rw = load_roberta()
+        return rw.predict(texts)
+
 def explain_baseline(text: str):
     """Explains why a text was flagged by identifying high-contribution keywords."""
     try:
