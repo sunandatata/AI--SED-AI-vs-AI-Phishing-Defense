@@ -118,7 +118,4 @@ streamlit run app/app.py
 ---
 
 ## 👨‍💻 Author
-**Project Lead:** [Your Name]
-**Project Status:** Midterm Build (75% Complete)
-
-*Built with ❤️ to secure the human element in cybersecurity.*
+**Project Lead:** SUNANDA TATA
