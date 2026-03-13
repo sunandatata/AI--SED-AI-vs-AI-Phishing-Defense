@@ -230,6 +230,7 @@ def run_round(
     model_path: str,
     roberta_path: str,
     t5_path: str,
+    red_agent_obj = None, # New: Optional adaptive agent
 ):
     """
     Executes one Red vs Blue adversarial round
@@ -241,29 +242,61 @@ def run_round(
 
     texts = []
     true_labels = []
+    topics = []
+    channels = []
     import random
 
     # ---------- RED AGENT ----------
     CHANNELS = ["email", "sms"]
     LEVELS = ["template", "paraphrase", "obfuscation"]
+    tones = []
 
-    if cfg.get("use_t5", False):
+    if red_agent_obj:
+        # ADAPTIVE MODE
+        for _ in range(n):
+            is_phishing = random.choice([True, False])
+            if is_phishing:
+                # Use the adaptive agent to generate a targeted attack
+                txt, strat = red_agent_obj.generate_attack(use_t5=cfg.get("use_t5", True))
+                chan = strat["channel"]
+                top = strat["topic"]
+                tne = strat["tone"]
+            else:
+                chan = random.choice(CHANNELS)
+                txt, _ = gen_baseline(chan, "template", return_label=True, is_phishing=False)
+                top = "Legitimate"
+                tne = "formal"
+            
+            texts.append(txt)
+            true_labels.append(1 if is_phishing else 0)
+            topics.append(top)
+            channels.append(chan)
+            tones.append(tne)
+        red_used = f"Adaptive Red Agent (Round {getattr(red_agent_obj, 'evolution_round', 0)+1})"
+    
+    elif cfg.get("use_t5", False):
+        # T5 STATIC MODE
         for _ in range(n):
             is_phishing = random.choice([True, False])
             chan = random.choice(CHANNELS)
-            # T5 mostly handles emails in our setup, but we'll try to follow channel if possible
             topic = "Payroll Verification" if is_phishing else "Weekly Report Update"
+            tone = "urgent" if is_phishing else "professional"
             txt = t5_generate(
                 model_path=t5_path,
                 mode=chan,
                 topic=topic,
                 dept="IT",
                 is_phishing=is_phishing,
+                tone=tone
             )
             texts.append(txt)
             true_labels.append(1 if is_phishing else 0)
+            topics.append(topic)
+            channels.append(chan)
+            tones.append(tone)
         red_used = "T5"
     else:
+        # BASELINE STATIC MODE
         for _ in range(n):
             is_phishing = random.choice([True, False])
             chan = random.choice(CHANNELS)
@@ -271,6 +304,9 @@ def run_round(
             txt, lbl = gen_baseline(chan, lvl, return_label=True, is_phishing=is_phishing)
             texts.append(txt)
             true_labels.append(lbl)
+            topics.append(lvl)
+            channels.append(chan)
+            tones.append("neutral")
         red_used = "Multi-Mode Template"
 
     # ---------- BLUE AGENT ----------
@@ -287,12 +323,21 @@ def run_round(
         "text": texts,
         "true_label": true_labels,
         "blue_prob": probs,
-        "blue_label": preds
+        "blue_label": preds,
+        "topic": topics,
+        "channel": channels,
+        "tone": tones,
+        "blue_model": model_type,
+        "red_model": red_used
     })
 
     # ---------- METRIC ----------
     correct = (df["blue_label"] == df["true_label"]).sum()
     dei = round((correct / len(df)) * 100, 2)
+
+    # ---------- EVOLUTION FEEDBACK ----------
+    if red_agent_obj:
+        red_agent_obj.analyze_feedback(df)
 
     # ---------- SAVE ----------
     out_dir = Path("data/synthetic")

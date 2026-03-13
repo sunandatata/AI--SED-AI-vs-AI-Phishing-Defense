@@ -17,6 +17,7 @@ import subprocess
 import inspect
 from pathlib import Path
 from datetime import datetime
+import urllib.parse
 
 import numpy as np
 import pandas as pd
@@ -78,7 +79,13 @@ try:
         generate_text as t5_gen_text,
         _build_prompt as t5_build_prompt
     )
-except Exception:
+    from red_agent.red_agent_framework import AdaptiveRedAgent
+except Exception as e:
+    st.error(f"Critical Import Error (Red Agent): {e}")
+    class AdaptiveRedAgent:
+        def __init__(self, **kwargs): self.evolution_round = 0
+        def generate_attack(self, **kwargs): return "Red Agent Error", {}
+        def analyze_feedback(self, **kwargs): pass
     def t5_available_func(_=None) -> bool: return False
     def t5_generate(**kwargs) -> str: raise RuntimeError("T5 not available.")
     load_t5_model = None
@@ -143,6 +150,27 @@ def is_safe_text(text: str) -> bool:
 def safe_enterprise_email(topic: str, dept: str) -> str:
     return f"From: {dept} Support\nSubject: Action Required – {topic}\n\nDear Employee,\nPlease verify your {topic} via the portal.\n\nRegards,\n{dept} Support"
 
+TRUSTED_DOMAINS = [
+    "google.com", "microsoft.com", "apple.com", "amazon.com", "github.com",
+    "myworkdayjobs.com", "workday.com", "okta.com", "salesforce.com",
+    "slack.com", "zoom.us", "dropbox.com", "box.com", "comcast.com",
+]
+
+def extract_domains(text: str) -> list[str]:
+    urls = re.findall(r'(https?://[^\s]+)', text)
+    domains = set()
+    for u in urls:
+        try:
+            # extract domain, strip subdomains if possible for simple matching, or just check if it ends with a trusted domain
+            loc = urllib.parse.urlparse(u).netloc.lower()
+            if loc.startswith("www."): loc = loc[4:]
+            domains.add(loc)
+        except: pass
+    return list(domains)
+
+def is_domain_trusted(domain: str) -> bool:
+    return any(domain == td or domain.endswith("." + td) for td in TRUSTED_DOMAINS)
+
 # =========================================================
 # HELPERS
 # =========================================================
@@ -178,14 +206,12 @@ def run_round_safe(**kwargs):
 # =========================================================
 def main():
     st.set_page_config(page_title="AI²-SED Application", layout="wide")
-    st.title("⚡ AI²-SED — AI vs AI Phishing Defense")
+    st.title("AI²-SED — AI vs AI Phishing Defense")
 
-    with st.sidebar:
-        st.subheader("Environment Status")
-        T5_AVAILABLE = bool(t5_available_func(T5_DIR))
-        st.write(f"Baseline: {'✅' if BASELINE_PATH.exists() else '❌'}")
-        st.write(f"RoBERTa: {'✅' if ROBERTA_DIR.exists() else '❌'}")
-        st.write(f"T5: {'✅' if T5_AVAILABLE else '❌'}")
+    # Environment checks (hidden from UI)
+    T5_AVAILABLE = bool(t5_available_func(T5_DIR))
+    if "red_agent" not in st.session_state:
+        st.session_state.red_agent = AdaptiveRedAgent(t5_path=str(T5_DIR))
 
     # Tabs definition
     tabs = st.tabs([
@@ -200,154 +226,308 @@ def main():
     ])
     tab_detect, tab_red, tab_round, tab_bulk, tab_train, tab_eval, tab_rounds, tab_dash = tabs
 
-    # 1. Detect Phishing
+    # 1. Detect Phishing (Live User Tool)
     with tab_detect:
-        st.subheader("Shield: Live Detection")
-        u_text = st.text_area("Paste message below:", height=150, key="live_ta")
-        c_m, c_b = st.columns([3,1])
-        with c_m: m_sel = st.selectbox("Model", ["baseline", "roberta"], key="live_ms")
-        with c_b:
+        st.subheader("Shield: Real-time Phishing Verification")
+        u_text = st.text_area("Paste the message content here:", height=180, key="live_user_input_ta")
+        
+        col_m, col_b = st.columns([3, 1])
+        with col_m:
+            m_choice = st.selectbox("Select Blue Agent Model", ["baseline", "roberta"], key="live_user_model_sel")
+        with col_b:
             st.write(""); st.write("")
-            if st.button("Analyze", type="primary", key="live_btn"):
-                if u_text.strip():
-                    p = float(eval_predict([u_text], m_sel)[0])
-                    if p > 0.5: st.error(f"⚠️ **PHISHING** ({p:.1%})")
-                    else: st.success(f"✅ **BENIGN** ({p:.1%})")
-                else: st.warning("Enter text.")
+            analyze_active = st.button("Verify Message", type="primary", key="live_user_btn_run")
 
-    # 2. Generate
+        if analyze_active:
+            if u_text.strip():
+                with st.spinner("Analyzing message and verifying entities..."):
+                    
+                    found_domains = extract_domains(u_text)
+                    untrusted_domains = [d for d in found_domains if not is_domain_trusted(d)]
+                    trusted_domains = [d for d in found_domains if is_domain_trusted(d)]
+                    
+                    prob = float(eval_predict([u_text], m_choice)[0])
+                    
+                    st.divider()
+                    st.subheader("Analysis Verdict")
+                    
+                    if untrusted_domains:
+                        st.error(f"⚠️ **PHISHING DETECTED: Untrusted Linking Entity**")
+                        st.write(f"This message contains links to unverified or suspicious external domains: `{', '.join(untrusted_domains)}`")
+                        prob = 0.99 # Override probability mechanically for the metric
+                    elif trusted_domains:
+                        st.success(f"✅ **BENIGN MESSAGE**")
+                        st.info(f"Verified Entities Found: `{', '.join(trusted_domains)}`")
+                        st.write("This message is verified legitimate based on safe entity links, overriding AI language patterns.")
+                        prob = 0.01 # Force it to show as benign in metrics
+                    else:
+                        st.error(f"⚠️ **PHISHING DETECTED: Unverified Source / Language**")
+                        if prob > 0.5:
+                            st.write("This message matches known phishing language patterns and lacks verified entity links.")
+                        else:
+                            st.write("No verified enterprise links were found to prove authenticity. Defaulting to high-security blocking.")
+                        prob = max(prob, 0.85) # Force to phishing
+                    
+                    m1, m2 = st.columns(2)
+                    m1.metric("Phish Probability", f"{prob:.1%}")
+                    m2.metric("Confidence Score", f"{abs(prob-0.5)*2:.1%}")
+            else:
+                st.warning("Please paste a message to analyze.")
+
+    # 2. Generate (Red Agent Lab)
     with tab_red:
-        st.subheader("Red Agent: Generation")
-        col1, col2 = st.columns(2)
-        with col1:
-            chan = st.selectbox("Channel", ["email", "sms"], key="gen_chan")
-            meth = st.selectbox("Method", ["Template-based", "T5 Transformer", "Dataset Sample (Real)"], key="gen_meth")
-            topic = st.text_input("Topic", "Security", key="gen_topic")
-            dept = st.text_input("Dept", "IT", key="gen_dept")
-            p_mode = st.selectbox("Type", ["Phishing", "Legitimate", "Mixed"], key="gen_type")
-        with col2:
-            if st.button("Generate Sample", type="primary", key="gen_btn"):
-                is_p = (p_mode == "Phishing") if p_mode != "Mixed" else bool(np.random.choice([True, False]))
-                txt = None
-                if meth == "Dataset Sample (Real)":
-                    train_f = find_train_csv()
-                    if train_f: txt = sample_real_phish(pd.read_csv(train_f))
-                if not txt:
-                    if meth == "T5 Transformer" and T5_AVAILABLE:
-                        t5b = load_t5_cached()
-                        if t5b: txt = t5_gen_text(t5b[0], t5b[1], t5_build_prompt(chan, topic=topic, dept=dept, is_phishing=is_p))
-                    if not txt:
-                        txt = gen_baseline(chan, "template", is_phishing=is_p)
-                        if isinstance(txt, tuple): txt = txt[0]
-                if txt and is_safe_text(txt): st.code(txt, language="markdown")
-                else: st.warning("Safety block or generation error.")
+        st.subheader("Red Agent: Attack Labs")
+        
+        c_r1, c_r2 = st.columns(2)
+        with c_r1:
+            r_chan = st.selectbox("Delivery Channel", ["email", "sms"], key="red_lab_chan")
+            r_meth = st.selectbox("Attack Method", ["Template-based", "T5 Transformer", "Dataset Sample (Real)"], key="red_lab_meth")
+            r_topic = st.text_input("Core Topic", "System Upgrade", key="red_lab_topic")
+            r_dept = st.text_input("Sender Department", "IT Security", key="red_lab_dept")
+        
+        with c_r2:
+            st.info("**Red agent output is processed here**")
+            if st.button("Generate Experimental Attack", type="primary", key="red_lab_gen_btn"):
+                with st.spinner("Synthesizing attack content..."):
+                    is_p = True # Default to generating a Phishing attack
+                    gen_txt = None
+                    
+                    if r_meth == "Dataset Sample (Real)":
+                        t_csv = find_train_csv()
+                        if t_csv: gen_txt = sample_real_phish(pd.read_csv(t_csv))
+                    
+                    if not gen_txt:
+                        if r_meth == "T5 Transformer" and T5_AVAILABLE:
+                            bundle = load_t5_cached()
+                            if bundle:
+                                prompt = t5_build_prompt(r_chan, topic=r_topic, dept=r_dept, is_phishing=is_p)
+                                gen_txt = t5_gen_text(bundle[0], bundle[1], prompt)
+                        if not gen_txt:
+                            gen_txt = gen_baseline(r_chan, "template", is_phishing=is_p)
+                            if isinstance(gen_txt, tuple): gen_txt = gen_txt[0]
+                    
+                    if gen_txt and is_safe_text(gen_txt):
+                        st.code(gen_txt, language="markdown")
+                        st.caption(f"Generation Engine: {r_meth} | Target: Phishing (Legitimate-Looking Lure)")
+                    else:
+                        st.warning("Attack synthesis failed or content was blocked by safety filters.")
 
-    # 3. Adversarial Round
+    # 3. Adversarial Round (Red vs Blue Interaction)
     with tab_round:
-        st.subheader("Red vs Blue Round")
-        n_adv = st.number_input("Samples", 10, 500, 100, 10, key="adv_n")
-        m_adv = st.selectbox("Blue Model", ["baseline", "roberta"], key="adv_m")
-        rid = next_round_id()
-        if st.button("Run Round", key="adv_btn"):
-            df, dei, red_ = run_round_safe(round_id=rid, n=n_adv, model_type=m_adv, model_path=str(BASELINE_PATH), 
-                                         roberta_path=str(ROBERTA_DIR), t5_path=str(T5_DIR), out_dir=str(SYN_DIR))
-            st.success(f"Round {rid} complete. DEI: {dei:.2f}%")
-            st.dataframe(df.head())
+        st.subheader("Adversarial Rounds")
+        
+        c_a1, c_a2 = st.columns(2)
+        with c_a1:
+            a_n = st.number_input("Attack Sample Size", 10, 500, 100, 10, key="adv_round_n")
+            a_blue = st.selectbox("Blue Agent Selection", ["baseline", "roberta"], key="adv_round_blue")
+        with c_a2:
+            a_thr = st.slider("Detection Threshold", 0.0, 1.0, 0.5, 0.05, key="adv_round_thr")
+            a_adaptive = st.checkbox("Enable Adversarial Evolution", value=True, help="If enabled, Red Agent learns from bypassed samples.", key="adv_round_adaptive")
+        
+        cur_rid = next_round_id()
+        if st.button("Initiate Adversarial Simulation", key="adv_round_run_btn"):
+            with st.spinner(f"Running Round {cur_rid}..."):
+                try:
+                    r_agent = st.session_state.red_agent if a_adaptive else None
+                    df_r, dei_r, red_tag = run_round_safe(
+                        round_id=cur_rid, n=a_n, threshold=a_thr, model_type=a_blue,
+                        cfg_path=str(CFG_PATH),
+                        model_path=str(BASELINE_PATH), roberta_path=str(ROBERTA_DIR),
+                        t5_path=str(T5_DIR), out_dir=str(SYN_DIR),
+                        red_agent_obj=r_agent
+                    )
+                    st.success(f"Adversarial Round {cur_rid} Complete!")
+                    st.metric("Defensive Effectiveness Index (DEI)", f"{dei_r:.2f}%")
+                    st.caption(f"Engine: {red_tag}")
+                    st.dataframe(df_r.head(10))
+                except Exception as ex:
+                    st.error(f"Round execution failed: {str(ex)}")
 
-    # 4. Bulk Simulation
+        st.divider()
+        st.subheader("Evolutionary Campaign Simulation")
+        c_c1, c_c2 = st.columns(2)
+        with c_c1:
+            camp_rounds = st.number_input("Rounds to Run", 2, 10, 3, 1, key="camp_rounds_n")
+        with c_c2:
+            st.write(""); st.write("")
+            if st.button("🚀 Start Evolutionary Campaign", key="camp_run_btn"):
+                prog_camp = st.progress(0)
+                status_camp = st.empty()
+                camp_results = []
+                for r_idx in range(int(camp_rounds)):
+                    rid_camp = next_round_id()
+                    status_camp.text(f"Executing Evolutionary Round {r_idx+1}/{camp_rounds} (ID: {rid_camp})...")
+                    r_agent = st.session_state.red_agent if a_adaptive else None
+                    _, dei_camp, _ = run_round_safe(
+                        round_id=rid_camp, n=a_n, threshold=a_thr, model_type=a_blue,
+                        cfg_path=str(CFG_PATH),
+                        model_path=str(BASELINE_PATH), roberta_path=str(ROBERTA_DIR),
+                        t5_path=str(T5_DIR), out_dir=str(SYN_DIR),
+                        red_agent_obj=r_agent
+                    )
+                    camp_results.append(dei_camp)
+                    prog_camp.progress((r_idx+1)/camp_rounds)
+                
+                status_camp.success(f"Evolutionary Campaign Complete! Final DEI delta: {camp_results[-1] - camp_results[0]:.2f}%")
+                st.line_chart(pd.DataFrame({"DEI": camp_results}), use_container_width=True)
+
+    # 4. Bulk Attack Simulation (Stress Test)
     with tab_bulk:
-        st.subheader("🤖 Defense Stress Test")
-        v_col1, v_col2 = st.columns(2)
-        with v_col1:
-            v_n = st.number_input("Volume", 50, 2000, 200, 50, key="bulk_n")
-            v_m = st.selectbox("Blue Model", ["baseline", "roberta"], key="bulk_m")
-        with v_col2:
-            v_red = st.selectbox("Red Engine", ["Baseline (Fast)", "T5 (Deep)"], key="bulk_red")
-
-        if st.button("Run Stress Test", key="bulk_btn"):
-            prog = st.progress(0); stat = st.empty(); res = []
-            t5_b = load_t5_cached() if (v_red == "T5 (Deep)" and T5_AVAILABLE) else None
+        st.subheader("Bulk Attack Simulation")
+        
+        c_b1, c_b2 = st.columns(2)
+        with c_b1:
+            b_n = st.number_input("Campaign Volume", 50, 2000, 200, 50, key="bulk_sim_n")
+            b_blue = st.selectbox("Blue Agent Target", ["baseline", "roberta"], key="bulk_sim_blue")
+        with c_b2:
+            b_red = st.selectbox("Red Generation Engine", ["Baseline (Fast)", "T5 (Deep)"], key="bulk_sim_red")
             
-            for i in range(int(v_n)):
-                prog.progress((i+1)/v_n)
-                stat.text(f"Attacking... {i+1}/{v_n}")
-                isp = bool(np.random.choice([True, False]))
-                ch = np.random.choice(["email", "sms"])
+        if st.button("🚀 Launch Campaign Simulation", key="bulk_sim_run_btn"):
+            prog = st.progress(0); status_txt = st.empty(); results_list = []
+            t5_bundle = load_t5_cached() if (b_red == "T5 (Deep)" and T5_AVAILABLE) else None
+            
+            for i in range(int(b_n)):
+                prog.progress((i+1)/b_n)
+                status_txt.text(f"Generating and testing attack... {i+1} of {b_n}")
+                is_phish_campaign = bool(np.random.choice([True, False]))
+                ch_campaign = np.random.choice(["email", "sms"])
                 
-                if t5_b:
-                    txt = t5_gen_text(t5_b[0], t5_b[1], t5_build_prompt(ch, topic="Urgent", dept="Admin", is_phishing=isp))
+                if t5_bundle:
+                    txt_c = t5_gen_text(t5_bundle[0], t5_bundle[1], t5_build_prompt(ch_campaign, topic="Campaign Update", dept="Service", is_phishing=is_phish_campaign))
                 else:
-                    txt = gen_baseline(ch, "template", is_phishing=isp)
-                    if isinstance(txt, tuple): txt = txt[0]
+                    txt_c = gen_baseline(ch_campaign, "template", is_phishing=is_phish_campaign)
+                    if isinstance(txt_c, tuple): txt_c = txt_c[0]
                 
-                pb = float(eval_predict([txt], v_m)[0])
-                res.append({"phish": isp, "detected": (pb > 0.5)})
+                prediction_prob = float(eval_predict([txt_c], b_blue)[0])
+                results_list.append({"is_phish": is_phish_campaign, "was_detected": (prediction_prob > 0.5)})
             
-            stat.empty(); prog.empty()
-            bdf = pd.DataFrame(res)
+            status_txt.empty(); prog.empty()
+            df_bulk = pd.DataFrame(results_list)
             
             # Metrics
-            p_sent = int(bdf["phish"].sum())
-            p_det = int(((bdf["phish"]) & (bdf["detected"])).sum())
-            rec = p_det / max(1, p_sent)
+            total_phish = int(df_bulk["is_phish"].sum())
+            detected_phish = int(((df_bulk["is_phish"]) & (df_bulk["was_detected"])).sum())
+            total_benign = len(df_bulk) - total_phish
+            fp_count = int(((~df_bulk["is_phish"]) & (df_bulk["was_detected"])).sum())
             
-            m_c1, m_c2, m_c3 = st.columns(3)
-            m_c1.metric("Phishing Sent", p_sent)
-            m_c1.metric("Detected", p_det)
-            m_c2.metric("Recall (DR)", f"{rec:.1%}")
-            m_c3.metric("False Positives", int(((~bdf["phish"]) & (bdf["detected"])).sum()))
+            st.write("### Campaign Metrics Recap")
+            met_c1, met_c2, met_c3, met_c4 = st.columns(4)
+            met_c1.metric("Phishing Sent", total_phish)
+            met_c2.metric("Phishing Caught", detected_phish)
+            met_c3.metric("Recall (Detection Rate)", f"{(detected_phish/max(1, total_phish)):.1%}")
+            met_c4.metric("False Positives", fp_count)
             
-            st.dataframe(bdf.head(20))
+            st.dataframe(df_bulk.head(20))
 
-    # 5. Train
+    # 5. Train Models (Defensive Improvement)
     with tab_train:
-        st.subheader("Training Center")
-        tr_csv = st.text_input("CSV Path", str(PROC_DIR / "train.csv"), key="tr_path")
-        if st.button("Train Baseline", key="tr_b"):
-            subprocess.call(["python", "blue_agent/train_baseline.py", "--input", tr_csv], cwd=str(ROOT))
-            st.success("Train baseline triggered.")
-        if st.button("Train RoBERTa", key="tr_r"):
-            subprocess.call(["python", "blue_agent/train_roberta.py", "--input", tr_csv, "--epochs", "1"], cwd=str(ROOT))
-            st.success("Train RoBERTa triggered.")
+        st.subheader("Blue Agent Academy: Training")
+        
+        train_input_path = st.text_input("Target Training Dataset (CSV)", str(PROC_DIR / "train.csv"), key="train_input_path_field")
+        
+        c_t1, c_t2 = st.columns(2)
+        with c_t1:
+            if st.button("Retrain Baseline Agent", key="train_btn_baseline"):
+                with st.spinner("Training Baseline..."):
+                    subprocess.call(["python", "blue_agent/train_baseline.py", "--input", train_input_path], cwd=str(ROOT))
+                    st.success("Baseline Agent training triggered successfully.")
+        with c_t2:
+            if st.button("Retrain RoBERTa Agent", key="train_btn_roberta"):
+                with st.spinner("Training RoBERTa (Epochs=1)..."):
+                    subprocess.call(["python", "blue_agent/train_roberta.py", "--input", train_input_path, "--epochs", "1"], cwd=str(ROOT))
+                    st.success("RoBERTa Agent training triggered successfully.")
 
-    # 6. Evaluate
+        st.divider()
+        st.subheader("Continuous Feedback Loop")
+        
+        if st.button("🔗 Merge Round Data & Close Loop", key="train_close_loop_btn"):
+            with st.spinner("Aggregating adversarial data..."):
+                merged_path = str(PROC_DIR / "augmented_train.csv")
+                count = merge_adversarial_data(str(PROC_DIR / "train.csv"), str(SYN_DIR), merged_path)
+                if count:
+                    st.success(f"Merged {count} unique samples into {merged_path}.")
+                    st.info("You can now set the 'Target Training Dataset' above to this new file and retrain.")
+                else:
+                    st.warning("No adversarial round data found to merge.")
+
+    # 6. Evaluate Models (Static ML Benchmark)
     with tab_eval:
-        st.subheader("ML Evaluation")
-        e_csv = st.text_input("Eval CSV", str(PROC_DIR / "train.csv"), key="ev_p")
-        e_mod = st.selectbox("Model", ["baseline", "roberta"], key="ev_m")
-        if st.button("Evaluate", key="ev_b"):
-            df_e = pd.read_csv(e_csv)
-            if "text" in df_e.columns and "label" in df_e.columns:
-                y = df_e["label"].values; ps = eval_predict(df_e["text"].tolist(), e_mod)
-                ls = (ps >= 0.5).astype(int)
-                st.metric("F1 Score", f"{f1_score(y, ls):.4f}")
-                st.code(classification_report(y, ls))
+        st.subheader("Model Evaluation Hub")
+        
+        e_path_csv = st.text_input("Evaluation Dataset (CSV)", str(PROC_DIR / "train.csv"), key="eval_hub_csv_path")
+        e_model_type = st.selectbox("Model to Benchmark", ["baseline", "roberta"], key="eval_hub_model_sel")
+        
+        if st.button("Run Comprehensive Evaluation", key="eval_hub_run_btn"):
+            df_eval_data = pd.read_csv(e_path_csv)
+            if "text" in df_eval_data.columns and "label" in df_eval_data.columns:
+                with st.spinner("Calculating metrics..."):
+                    y_ground = df_eval_data["label"].values
+                    probs_pred = eval_predict(df_eval_data["text"].tolist(), e_model_type)
+                    labels_pred = (probs_pred >= 0.5).astype(int)
+                    
+                    # Basic Metrics
+                    f1_val = f1_score(y_ground, labels_pred)
+                    ap_val = average_precision_score(y_ground, probs_pred)
+                    
+                    st.write("### Performance Metrics")
+                    e_col1, e_col2 = st.columns(2)
+                    e_col1.metric("F1 Score", f"{f1_val:.4f}")
+                    e_col2.metric("PR-AUC (Average Precision)", f"{ap_val:.4f}")
+                    
+                    st.write("#### Classification Report")
+                    st.code(classification_report(y_ground, labels_pred))
+                    
+                    # Confusion Matrix Visual
+                    st.write("#### Confusion Matrix")
+                    cm_mat = confusion_matrix(y_ground, labels_pred)
+                    fig_cm, ax_cm = plt.subplots(figsize=(6, 4))
+                    ax_cm.imshow(cm_mat, cmap='Blues', alpha=0.3)
+                    for (i, j), val in np.ndenumerate(cm_mat):
+                        ax_cm.text(j, i, str(val), ha='center', va='center', fontsize=12)
+                    ax_cm.set_xticks([0, 1]); ax_cm.set_xticklabels(["Benign", "Phish"])
+                    ax_cm.set_yticks([0, 1]); ax_cm.set_yticklabels(["Benign", "Phish"])
+                    ax_cm.set_xlabel("Predicted"); ax_cm.set_ylabel("True")
+                    st.pyplot(fig_cm)
             else:
-                st.error("CSV must contain 'text' and 'label' columns.")
+                st.error("Missing required columns: 'text' and 'label'.")
 
-    # 7. Rounds & Metrics
+    # 7. Rounds & Metrics (Historical Tracking)
     with tab_rounds:
-        st.subheader("Experiment History")
-        h_files = list_round_files()
-        if h_files:
-            h_data = []
-            for f in h_files:
-                d = pd.read_csv(f); id_ = int(f.stem.split("_")[-1]) if "_" in f.stem else 0
-                dei_ = 0.0
-                if "blue_label" in d.columns:
-                    target = "true_label" if "true_label" in d.columns else ("label" if "label" in d.columns else None)
-                    if target:
-                        dei_ = (d["blue_label"] == d[target]).mean() * 100
-                    else:
-                        # Fallback: if all rows were phishing (common in early rounds), 
-                        # DEI is just the recall of blue_label
-                         dei_ = d["blue_label"].mean() * 100
-                h_data.append({"Round": id_, "DEI": dei_})
-            hdf = pd.DataFrame(h_data).sort_values("Round")
-            st.line_chart(hdf.set_index("Round")["DEI"])
-        else: st.info("No data.")
+        st.subheader("📈 Round Records & DEI History")
+        st.write("Track the evolution of defensive effectiveness across adversarial simulations.")
+        
+        history_files = list_round_files()
+        if history_files:
+            history_rows = []
+            for f_round in history_files:
+                d_round = pd.read_csv(f_round)
+                r_id_numeric = int(f_round.stem.split("_")[-1]) if "_" in f_round.stem else 0
+                
+                # Robust DEI calculation
+                t_col = "true_label" if "true_label" in d_round.columns else ("label" if "label" in d_round.columns else None)
+                if "blue_label" in d_round.columns and t_col:
+                    dei_metric = (d_round["blue_label"] == d_round[t_col]).mean() * 100
+                    p_catch = int(((d_round[t_col] == 1) & (d_round["blue_label"] == 1)).sum())
+                    p_total = max(1, int((d_round[t_col] == 1).sum()))
+                else:
+                    dei_metric = d_round["blue_label"].mean() * 100 if "blue_label" in d_round.columns else 0.0
+                    p_catch, p_total = 0, 1
+                
+                history_rows.append({
+                    "Round": r_id_numeric,
+                    "Samples": len(d_round),
+                    "DEI (%)": round(dei_metric, 2),
+                    "Detection (%)": round((p_catch/p_total)*100, 1)
+                })
+            
+            df_history = pd.DataFrame(history_rows).sort_values("Round")
+            st.line_chart(df_history.set_index("Round")[["DEI (%)", "Detection (%)"]])
+            st.write("#### Detailed Historical Data")
+            st.dataframe(df_history)
+        else:
+            st.info("No recorded adversarial rounds found. Start by running an **Adversarial Round**.")
 
-    # 8. Dashboard
+    # 8. Dashboard (Executive Visualization)
     with tab_dash:
         render_dashboard()
 
