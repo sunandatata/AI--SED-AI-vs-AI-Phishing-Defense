@@ -81,6 +81,7 @@ try:
         _build_prompt as t5_build_prompt
     )
     from red_agent.red_agent_framework import AdaptiveRedAgent
+    from red_agent.generate_qr import generate_quishing_qr
 except Exception as e:
     st.error(f"Critical Import Error (Red Agent): {e}")
     class AdaptiveRedAgent:
@@ -184,6 +185,77 @@ def highlight_text(text: str, contributions: list[tuple[str, float]]):
         highlighted = pattern.sub(f'<span style="background-color: {color}; color: white; padding: 2px 4px; border-radius: 4px; font-weight: bold;">\\1</span>', highlighted)
     return highlighted
 
+def explain_roberta(text: str):
+    """Explains RoBERTa classification using Leave-One-Out (Occlusion) Saliency."""
+    try:
+        rw = load_roberta()
+        # Original probability
+        base_prob = float(rw.predict([text])[0])
+        
+        words = text.split()
+        if len(words) > 30: # Limit for performance
+             words = words[:30]
+             
+        contributions = []
+        # Occlude each word and check the delta
+        for i in range(len(words)):
+            occluded_text = " ".join(words[:i] + words[i+1:])
+            new_prob = float(rw.predict([occluded_text])[0])
+            delta = base_prob - new_prob
+            if delta > 0.01: # Minimal significance threshold
+                contributions.append((words[i], delta * 5)) # Scale for visibility
+                
+        contributions.sort(key=lambda x: x[1], reverse=True)
+        return contributions
+    except Exception:
+        return []
+
+# =========================================================
+# REAL-WORLD SIMULATION HELPERS
+# =========================================================
+def render_browser_shield(prob: float, domains: list):
+    """Renders a simulated browser window showing security status."""
+    st.write("---")
+    st.subheader("🛡️ Browser Shield: Real-world Endpoint Simulation")
+    st.info("This simulation demonstrates how a modern browser extension would react to this content's destination.")
+    
+    # Mock browser bar
+    target_url = f"https://{domains[0]}/login" if domains else "https://system-update-center.net/verify"
+    st.markdown(f"""
+    <div style="background-color: #f1f3f4; padding: 10px; border-radius: 8px 8px 0 0; border: 1px solid #ccc; display: flex; align-items: center;">
+        <div style="width: 12px; height: 12px; background: #ff5f56; border-radius: 50%; margin-right: 8px;"></div>
+        <div style="width: 12px; height: 12px; background: #ffbd2e; border-radius: 50%; margin-right: 8px;"></div>
+        <div style="width: 12px; height: 12px; background: #27c93f; border-radius: 50%; margin-right: 20px;"></div>
+        <div style="background: white; flex-grow: 1; padding: 4px 10px; border-radius: 4px; border: 1px solid #ddd; font-size: 14px; font-family: monospace;">
+            {target_url}
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    if prob > 0.8:
+        st.markdown("""
+        <div style="background-color: #cc0000; color: white; padding: 40px; text-align: center; border: 1px solid #cc0000; border-top: none; border-radius: 0 0 8px 8px;">
+            <h1 style="color: white; margin: 0;">🛑 DECEPTIVE SITE AHEAD</h1>
+            <p style="font-size: 1.2em; margin-top: 10px;">The AI²-SED Browser Shield has blocked access to this page because it matches known phishing signatures.</p>
+            <button style="background: white; color: #cc0000; border: none; padding: 10px 20px; border-radius: 4px; font-weight: bold; cursor: pointer; margin-top: 20px;">Back to Safety</button>
+        </div>
+        """, unsafe_allow_html=True)
+    elif prob > 0.5:
+        st.markdown("""
+        <div style="background-color: #ff8c00; color: white; padding: 40px; text-align: center; border: 1px solid #ff8c00; border-top: none; border-radius: 0 0 8px 8px;">
+            <h1 style="color: white; margin: 0;">⚠️ SUSPICIOUS LINK</h1>
+            <p style="font-size: 1.2em; margin-top: 10px;">This page contains linguistic patterns similar to recent credential-harvesting attacks.</p>
+            <button style="background: white; color: #ff8c00; border: none; padding: 10px 20px; border-radius: 4px; font-weight: bold; cursor: pointer; margin-top: 20px;">Proceed Anyway (Caution)</button>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.markdown("""
+        <div style="background-color: #27c93f; color: white; padding: 40px; text-align: center; border: 1px solid #27c93f; border-top: none; border-radius: 0 0 8px 8px;">
+            <h1 style="color: white; margin: 0;">✅ PAGE SECURE</h1>
+            <p style="font-size: 1.2em; margin-top: 10px;">No malicious signatures detected by AI²-SED Federated Intelligence.</p>
+        </div>
+        """, unsafe_allow_html=True)
+
 # =========================================================
 # SAFETY FILTERS
 # =========================================================
@@ -264,6 +336,28 @@ def sync_global_intel():
             added += 1
     return added, len(TRUSTED_DOMAINS)
 
+def render_global_threat_map():
+    """Renders a stylized 'Global Intelligence' map for Federated Learning."""
+    st.subheader("🛰️ Global Federated Intelligence Hub")
+    st.write("This map visualizes the real-time sharing of attack signatures across decentralized defensive nodes.")
+    
+    # Generate some mock node data
+    map_data = pd.DataFrame([
+        {"lat": 40.7128, "lon": -74.0060, "name": "NYC Node", "threats": 42},
+        {"lat": 51.5074, "lon": -0.1278, "name": "London Node", "threats": 89},
+        {"lat": 35.6762, "lon": 139.6503, "name": "Tokyo Node", "threats": 56},
+        {"lat": -33.8688, "lon": 151.2093, "name": "Sydney Node", "threats": 21},
+        {"lat": 48.8566, "lon": 2.3522, "name": "Paris Node", "threats": 35},
+        {"lat": 1.3521, "lon": 103.8198, "name": "Singapore Hub", "threats": 112},
+    ])
+    
+    st.map(map_data, zoom=1)
+    
+    m_c1, m_c2, m_c3 = st.columns(3)
+    m_c1.metric("Active Global Nodes", "1,248")
+    m_c2.metric("Shared Signatures Today", "14,502")
+    m_c3.metric("Neutralized Threats", "128,491", delta="+12%")
+
 # =========================================================
 # HELPERS
 # =========================================================
@@ -310,14 +404,15 @@ def main():
     tabs = st.tabs([
         "Detect Phishing",
         "Generate (Red Agent)",
+        "Attack Assets (Kits)",
         "Adversarial Round",
         "Bulk Attack Simulation",
         "Train Models",
         "Evaluate Models",
-        "Rounds & Metrics",
+        "Round Records",
         "Dashboard"
     ])
-    tab_detect, tab_red, tab_round, tab_bulk, tab_train, tab_eval, tab_rounds, tab_dash = tabs
+    tab_detect, tab_red, tab_assets, tab_round, tab_bulk, tab_train, tab_eval, tab_rounds, tab_dash = tabs
 
     # 1. Detect Phishing (Live User Tool)
     with tab_detect:
@@ -376,9 +471,13 @@ def main():
                     if prob > 0.5:
                         st.write("---")
                         st.subheader("Explainable AI (XAI) Analysis")
-                        st.info("The words highlighted below have the strongest mathematical influence on the phishing detection score.")
+                        st.info(f"Analyzing {m_choice.upper()} using Contextual Saliency Mapping...")
                         
-                        contribs = explain_baseline(u_text)
+                        if m_choice == "baseline":
+                            contribs = explain_baseline(u_text)
+                        else:
+                            contribs = explain_roberta(u_text)
+                            
                         if contribs:
                             h_text = highlight_text(u_text, contribs)
                             st.markdown(f'<div style="background-color: #f0f2f6; padding: 20px; border-radius: 10px; line-height: 2.0; font-size: 1.1em;">{h_text}</div>', unsafe_allow_html=True)
@@ -390,6 +489,8 @@ def main():
                                     st.metric(word.capitalize(), f"+{score:.2f}")
                         else:
                             st.write("The model identified this as phishing based on a combination of subtle patterns rather than individual keywords.")
+                            
+                    render_browser_shield(prob, found_domains)
             else:
                 st.warning("Please paste a message to analyze.")
 
@@ -399,7 +500,7 @@ def main():
         
         c_r1, c_r2 = st.columns(2)
         with c_r1:
-            r_chan = st.selectbox("Delivery Channel", ["email", "sms"], key="red_lab_chan")
+            r_chan = st.selectbox("Delivery Channel", ["email", "sms", "qr_code (quishing)"], key="red_lab_chan")
             r_meth = st.selectbox("Attack Method", ["Template-based", "T5 Transformer", "Dataset Sample (Real)"], key="red_lab_meth")
             r_topic = st.text_input("Core Topic", "System Upgrade", key="red_lab_topic")
             r_dept = st.text_input("Sender Department", "IT Security", key="red_lab_dept")
@@ -408,28 +509,71 @@ def main():
             st.info("**Red agent output is processed here**")
             if st.button("Generate Experimental Attack", type="primary", key="red_lab_gen_btn"):
                 with st.spinner("Synthesizing attack content..."):
-                    is_p = True # Default to generating a Phishing attack
-                    gen_txt = None
-                    
-                    if r_meth == "Dataset Sample (Real)":
-                        t_csv = find_train_csv()
-                        if t_csv: gen_txt = sample_real_phish(pd.read_csv(t_csv))
-                    
-                    if not gen_txt:
-                        if r_meth == "T5 Transformer" and T5_AVAILABLE:
-                            bundle = load_t5_cached()
-                            if bundle:
-                                prompt = t5_build_prompt(r_chan, topic=r_topic, dept=r_dept, is_phishing=is_p)
-                                gen_txt = t5_gen_text(bundle[0], bundle[1], prompt)
-                        if not gen_txt:
-                            gen_txt = gen_baseline(r_chan, "template", is_phishing=is_p)
-                            if isinstance(gen_txt, tuple): gen_txt = gen_txt[0]
-                    
-                    if gen_txt and is_safe_text(gen_txt):
-                        st.code(gen_txt, language="markdown")
-                        st.caption(f"Generation Engine: {r_meth} | Target: Phishing (Legitimate-Looking Lure)")
+                    if r_chan == "qr_code (quishing)":
+                        phish_url = "https://untrusted-bank-verification.net/verify-account-update"
+                        qr_path = "red_agent/assets/quishing/generated_attack.png"
+                        generate_quishing_qr(phish_url, qr_path)
+                        
+                        st.image(qr_path, caption=f"Generated Quishing QR Code (Redirects to: {phish_url})", width=300)
+                        st.warning("⚠️ **Vulnerability Detected:** QR codes can bypass traditional text-based filters by shifting the malicious content to a non-textual vector.")
+                        st.info("💡 **Security Tip:** Modern defenders must use OCR (Optical Character Recognition) to scan QR codes for malicious URLs.")
                     else:
-                        st.warning("Attack synthesis failed or content was blocked by safety filters.")
+                        is_p = True # Default to generating a Phishing attack
+                        gen_txt = None
+                        
+                        if r_meth == "Dataset Sample (Real)":
+                            t_csv = find_train_csv()
+                            if t_csv: gen_txt = sample_real_phish(pd.read_csv(t_csv))
+                        
+                        if not gen_txt:
+                            if r_meth == "T5 Transformer" and T5_AVAILABLE:
+                                bundle = load_t5_cached()
+                                if bundle:
+                                    prompt = t5_build_prompt(r_chan, topic=r_topic, dept=r_dept, is_phishing=is_p)
+                                    gen_txt = t5_gen_text(bundle[0], bundle[1], prompt)
+                            if not gen_txt:
+                                gen_txt = gen_baseline(r_chan, "template", is_phishing=is_p)
+                                if isinstance(gen_txt, tuple): gen_txt = gen_txt[0]
+                        
+                        if gen_txt and is_safe_text(gen_txt):
+                            st.code(gen_txt, language="markdown")
+                            st.caption(f"Generation Engine: {r_meth} | Target: Phishing (Legitimate-Looking Lure)")
+                        else:
+                            st.warning("Attack synthesis failed or content was blocked by safety filters.")
+
+    # 3. Attack Assets (Phishing Kits)
+    with tab_assets:
+        st.subheader("Phishing Kit Gallery: The Attacker's Arsenal")
+        st.write("These assets represent the 'Final Link' in the phishing chain—the deceptive pages where credentials are harvested.")
+        
+        c_a1, c_a2, c_a3 = st.columns(3)
+        
+        with c_a1:
+            st.image("https://upload.wikimedia.org/wikipedia/commons/4/44/Microsoft_logo.svg", width=50)
+            st.write("### Microsoft 365 Lure")
+            st.caption("Target: Corporate Credentials")
+            if st.button("Preview Kit [MSFT]", key="prev_msft"):
+                with open("red_agent/assets/mockups/microsoft_login.html", "r") as f:
+                    st.components.v1.html(f.read(), height=500, scrolling=True)
+        
+        with c_a2:
+            st.image("https://www.google.com/images/branding/googlelogo/2x/googlelogo_color_92x30dp.png", width=100)
+            st.write("### Google / Gmail Lure")
+            st.caption("Target: Personal Content & Drive")
+            if st.button("Preview Kit [GOOG]", key="prev_goog"):
+                with open("red_agent/assets/mockups/google_login.html", "r") as f:
+                    st.components.v1.html(f.read(), height=500, scrolling=True)
+                    
+        with c_a3:
+            st.write("### 🏦 Global Secure Bank")
+            st.write("### Corporate Banking Lure")
+            st.caption("Target: Financial Assets")
+            if st.button("Preview Kit [BANK]", key="prev_bank"):
+                with open("red_agent/assets/mockups/bank_login.html", "r") as f:
+                    st.components.v1.html(f.read(), height=500, scrolling=True)
+                    
+        st.divider()
+        st.info("💡 **Security Analysis:** These pages use visual cues (logos, colors, fonts) to trick users into trusting a non-verified entity. AI²-SED helps identify the *content-based* paths that lead to these pages.")
 
     # 3. Adversarial Round (Red vs Blue Interaction)
     with tab_round:
@@ -674,6 +818,8 @@ def main():
 
     # 8. Dashboard (Executive Visualization)
     with tab_dash:
+        render_global_threat_map()
+        st.divider()
         render_dashboard()
 
 if __name__ == "__main__":

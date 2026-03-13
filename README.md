@@ -110,10 +110,10 @@ streamlit run app/app.py
 
 ## 📅 Future Roadmap
 
-*   [ ] **WHOIS Integration:** Real-time domain-age verification for the Entity Layer.
-*   [ ] **Smishing Optimization:** Specialized T5 fine-tuning for ultra-succinct SMS attacks.
-*   [ ] **Explainable AI (XAI):** UI-integrated word highlighting to visualize "Why" the AI flagged a message.
-*   [ ] **Federated Learning:** Shared attack-signature intelligence across distributed nodes.
+*   [x] **WHOIS Integration:** Real-time domain-age verification for the Entity Layer.
+*   [x] **Smishing Optimization:** Specialized T5 fine-tuning for ultra-succinct SMS attacks.
+*   [x] **Explainable AI (XAI):** UI-integrated word highlighting to visualize "Why" the AI flagged a message.
+*   [x] **Federated Learning:** Shared attack-signature intelligence across distributed nodes.
 
 ---
 
