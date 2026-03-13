@@ -10,8 +10,9 @@ from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 PROMPTS = {
     "email_phishing": "Write a short, formal phishing email about {topic}. It should sound {tone} and appear to be from {dept}. Make it sound urgent.",
     "email_legit": "Write a short, formal legitimate email about {topic}. It should sound {tone} and appear to be from {dept}.",
-    "sms_phishing": "Write a short mobile text about {topic}. Keep it concise and {tone}. Include a placeholder short link.",
-    "sms_legit": "Write a short legitimate mobile text about {topic}. Keep it concise and {tone}.",
+    "sms_phishing": "Write a highly urgent mobile SMS phishing alert about {topic}. Keep it under 160 characters. Sound like a bank, delivery service, or government agency. Include a convincing malicious short link.",
+    "sms_legit": "Write a short, helpful legitimate mobile text message about {topic}. Keep it concise.",
+    "smishing": "Create a deceptive SMS message claiming a problem with {topic}. Use urgent language, impersonate {dept}, and include a fake tinyurl. Limit to 20 words.",
     "paraphrase": "Paraphrase the following message while preserving intent and tone: {text}",
     "obfuscation": "Rewrite the message with subtle obfuscations (zero-width/homoglyph hints) but keep it readable: {text}",
 }
@@ -45,7 +46,9 @@ def _build_prompt(
     if mode == "email":
         return PROMPTS["email_phishing" if is_phishing else "email_legit"].format(topic=topic, dept=dept, tone=tone)
     if mode == "sms":
-        return PROMPTS["sms_phishing" if is_phishing else "sms_legit"].format(topic=topic, tone=tone)
+        return PROMPTS["sms_phishing" if is_phishing else "sms_legit"].format(topic=topic)
+    if mode == "smishing":
+        return PROMPTS["smishing"].format(topic=topic, dept=dept)
     if mode == "paraphrase":
         return PROMPTS["paraphrase"].format(text=text)
     if mode == "obfuscation":

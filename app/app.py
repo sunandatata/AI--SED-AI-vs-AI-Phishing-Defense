@@ -18,6 +18,7 @@ import inspect
 from pathlib import Path
 from datetime import datetime
 import urllib.parse
+import whois
 
 import numpy as np
 import pandas as pd
@@ -131,13 +132,48 @@ def load_t5_cached():
         return (t, m)
     except Exception: return None
 
-def eval_predict(texts, model_type: str):
-    if model_type == "baseline":
-        model = load_baseline()
-        return model.predict_proba(texts)[:, 1]
-    else:
-        rw = load_roberta()
-        return rw.predict(texts)
+def explain_baseline(text: str):
+    """Explains why a text was flagged by identifying high-contribution keywords."""
+    try:
+        pipeline = load_baseline()
+        vectorizer = pipeline.named_steps['tfidf']
+        model = pipeline.named_steps['clf']
+        
+        # Transform the single text
+        X = vectorizer.transform([text])
+        features = vectorizer.get_feature_names_out()
+        
+        # Get coefficients (for binary classification, model.coef_[0])
+        coeffs = model.coef_[0]
+        
+        # Calculate contribution: tfidf_value * coefficient
+        # X is sparse, so we find non-zero entries
+        row, cols = X.nonzero()
+        contributions = []
+        for col in cols:
+            score = X[0, col] * coeffs[col]
+            if score > 0.05: # Only care about high phish-signal words
+                contributions.append((features[col], score))
+        
+        # Sort by impact
+        contributions.sort(key=lambda x: x[1], reverse=True)
+        return contributions
+    except Exception:
+        return []
+
+def highlight_text(text: str, contributions: list[tuple[str, float]]):
+    """Highlights high-risk words in the text using HTML/Markdown."""
+    highlighted = text
+    # Sort by length of word descending to avoid overlapping issues (e.g., 'urgent' before 'urgency')
+    sorted_words = sorted(contributions, key=lambda x: len(x[0]), reverse=True)
+    
+    for word, score in sorted_words:
+        # Use a regex for whole-word replacement to avoid corruption
+        pattern = re.compile(rf'({re.escape(word)})', re.IGNORECASE)
+        # Intensity based on score
+        color = "#ff4b4b" if score > 0.5 else "#ffa500"
+        highlighted = pattern.sub(f'<span style="background-color: {color}; color: white; padding: 2px 4px; border-radius: 4px; font-weight: bold;">\\1</span>', highlighted)
+    return highlighted
 
 # =========================================================
 # SAFETY FILTERS
@@ -170,6 +206,54 @@ def extract_domains(text: str) -> list[str]:
 
 def is_domain_trusted(domain: str) -> bool:
     return any(domain == td or domain.endswith("." + td) for td in TRUSTED_DOMAINS)
+
+def get_domain_age_days(domain):
+    """Fetches domain age in days using WHOIS."""
+    try:
+        # Some libraries/OS might have issues with whois, so we wrap tightly
+        w = whois.whois(domain)
+        creation_date = w.creation_date
+        
+        # Handle cases where creation_date is a list
+        if isinstance(creation_date, list):
+            creation_date = creation_date[0]
+            
+        if creation_date and isinstance(creation_date, datetime):
+            age = datetime.now() - creation_date
+            return age.days
+        return None
+    except Exception:
+        return None
+
+# =========================================================
+# FEDERATED INTELLIGENCE (SIMULATED)
+# =========================================================
+FED_INTEL_PATH = ROOT / "fed_intel.json"
+
+def get_fed_intel():
+    import json
+    if not FED_INTEL_PATH.exists():
+        with open(FED_INTEL_PATH, 'w') as f:
+            json.dump({"shared_signatures": [], "node_count": 1}, f)
+    with open(FED_INTEL_PATH, 'r') as f:
+        return json.load(f)
+
+def update_fed_intel(data):
+    import json
+    with open(FED_INTEL_PATH, 'w') as f:
+        json.dump(data, f, indent=4)
+
+def sync_global_intel():
+    """Simulates syncing local defender with a federated intelligence hub."""
+    intel = get_fed_intel()
+    new_sigs = intel.get("shared_signatures", [])
+    added = 0
+    global TRUSTED_DOMAINS
+    for sig in new_sigs:
+        if sig not in TRUSTED_DOMAINS:
+            TRUSTED_DOMAINS.append(sig)
+            added += 1
+    return added, len(TRUSTED_DOMAINS)
 
 # =========================================================
 # HELPERS
@@ -254,7 +338,15 @@ def main():
                     if untrusted_domains:
                         st.error(f"⚠️ **PHISHING DETECTED: Untrusted Linking Entity**")
                         st.write(f"This message contains links to unverified or suspicious external domains: `{', '.join(untrusted_domains)}`")
-                        prob = 0.99 # Override probability mechanically for the metric
+                        
+                        # Check domain age for untrusted domains
+                        for d in untrusted_domains:
+                            age = get_domain_age_days(d)
+                            if age is not None and age < 60: # Flag domains younger than 60 days
+                                st.warning(f"🚨 **Urgent Warning:** The domain `{d}` was registered very recently ({age} days ago). This is a common tactic for disposable phishing sites.")
+                                prob = 0.99
+                        
+                        prob = max(prob, 0.95) # Override probability mechanically for the metric
                     elif trusted_domains:
                         st.success(f"✅ **BENIGN MESSAGE**")
                         st.info(f"Verified Entities Found: `{', '.join(trusted_domains)}`")
@@ -271,6 +363,24 @@ def main():
                     m1, m2 = st.columns(2)
                     m1.metric("Phish Probability", f"{prob:.1%}")
                     m2.metric("Confidence Score", f"{abs(prob-0.5)*2:.1%}")
+
+                    if prob > 0.5:
+                        st.write("---")
+                        st.subheader("Explainable AI (XAI) Analysis")
+                        st.info("The words highlighted below have the strongest mathematical influence on the phishing detection score.")
+                        
+                        contribs = explain_baseline(u_text)
+                        if contribs:
+                            h_text = highlight_text(u_text, contribs)
+                            st.markdown(f'<div style="background-color: #f0f2f6; padding: 20px; border-radius: 10px; line-height: 2.0; font-size: 1.1em;">{h_text}</div>', unsafe_allow_html=True)
+                            
+                            st.write("**Top Risk Keywords Detected:**")
+                            cols_k = st.columns(min(len(contribs), 5))
+                            for i, (word, score) in enumerate(contribs[:5]):
+                                with cols_k[i]:
+                                    st.metric(word.capitalize(), f"+{score:.2f}")
+                        else:
+                            st.write("The model identified this as phishing based on a combination of subtle patterns rather than individual keywords.")
             else:
                 st.warning("Please paste a message to analyze.")
 
@@ -393,7 +503,9 @@ def main():
                 ch_campaign = np.random.choice(["email", "sms"])
                 
                 if t5_bundle:
-                    txt_c = t5_gen_text(t5_bundle[0], t5_bundle[1], t5_build_prompt(ch_campaign, topic="Campaign Update", dept="Service", is_phishing=is_phish_campaign))
+                    prompt_mode = "smishing" if (ch_campaign == "sms" and is_phish_campaign) else ch_campaign
+                    max_tokens = 48 if ch_campaign == "sms" else 96
+                    txt_c = t5_gen_text(t5_bundle[0], t5_bundle[1], t5_build_prompt(prompt_mode, topic="Security Update", dept="Service", is_phishing=is_phish_campaign), max_new_tokens=max_tokens)
                 else:
                     txt_c = gen_baseline(ch_campaign, "template", is_phishing=is_phish_campaign)
                     if isinstance(txt_c, tuple): txt_c = txt_c[0]
@@ -449,6 +561,30 @@ def main():
                     st.info("You can now set the 'Target Training Dataset' above to this new file and retrain.")
                 else:
                     st.warning("No adversarial round data found to merge.")
+
+        st.divider()
+        st.subheader("Federated Learning (Simulated)")
+        st.write("Exchange threat signatures with the Global Intelligence Hub to strengthen collective defense.")
+        
+        c_f1, c_f2 = st.columns(2)
+        with c_f1:
+            if st.button("🛰️ Sync with Global Hub", key="fed_sync_btn"):
+                added, total = sync_global_intel()
+                st.success(f"Sync Complete! Added {added} new trusted enterprise signatures from federated nodes.")
+                st.info(f"Local Whitelist now contains {total} verified domains.")
+        with c_f2:
+            st.write("Publish verified safe domains to help other nodes reduce false positives.")
+            new_pub = st.text_input("Domain to Publish", "my-safe-biz.com", key="fed_pub_input")
+            if st.button("📢 Publish to Hub", key="fed_pub_btn"):
+                if new_pub:
+                    intel = get_fed_intel()
+                    if new_pub not in intel["shared_signatures"]:
+                        intel["shared_signatures"].append(new_pub)
+                        intel["last_sync"] = datetime.now().isoformat()
+                        update_fed_intel(intel)
+                        st.success(f"Successfully published `{new_pub}` to the Global Intelligence Hub.")
+                    else:
+                        st.warning("Domain already exists in the Global Hub.")
 
     # 6. Evaluate Models (Static ML Benchmark)
     with tab_eval:
