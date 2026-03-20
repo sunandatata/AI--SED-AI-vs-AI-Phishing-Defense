@@ -400,6 +400,99 @@ def render_global_threat_map():
     m_c2.metric("Shared Signatures Today", "14,502")
     m_c3.metric("Neutralized Threats", "128,491", delta="+12%")
 
+def render_federated_sync_ui():
+    """Renders the synchronization controls for Federated Learning."""
+    st.subheader("Collectivized Defense Controls")
+    st.write("Exchange threat signatures with the Global Intelligence Hub to strengthen collective defense.")
+    
+    c_f1, c_f2 = st.columns(2)
+    with c_f1:
+        if st.button("🛰️ Sync with Global Hub", key="fed_sync_btn"):
+            added, total = sync_global_intel()
+            st.success(f"Sync Complete! Added {added} new trusted enterprise signatures from federated nodes.")
+            st.info(f"Local Whitelist now contains {total} verified domains.")
+    with c_f2:
+        st.write("Publish verified safe domains to help other nodes reduce false positives.")
+        new_pub = st.text_input("Domain to Publish", "my-safe-biz.com", key="fed_pub_input")
+        if st.button("📢 Publish to Hub", key="fed_pub_btn"):
+            if new_pub:
+                intel = get_fed_intel()
+                if new_pub not in intel["shared_signatures"]:
+                    intel["shared_signatures"].append(new_pub)
+                    intel["last_sync"] = datetime.now().isoformat()
+                    update_fed_intel(intel)
+                    st.success(f"Successfully published `{new_pub}` to the Global Intelligence Hub.")
+                else:
+                    st.warning("Domain already exists in the Global Hub.")
+
+def render_phishing_kits():
+    """Renders the Phishing Kit Gallery view."""
+    st.subheader("Phishing Kit Gallery: The Attacker's Arsenal")
+    st.write("These assets represent the 'Final Link' in the phishing chain—the deceptive pages where credentials are harvested.")
+    
+    c_a1, c_a2, c_a3 = st.columns(3)
+    
+    with c_a1:
+        st.image("https://upload.wikimedia.org/wikipedia/commons/4/44/Microsoft_logo.svg", width=50)
+        st.write("### Microsoft 365 Lure")
+        st.caption("Target: Corporate Credentials")
+        if st.button("Preview Kit [MSFT]", key="prev_msft"):
+            with open("red_agent/assets/mockups/microsoft_login.html", "r") as f:
+                st.components.v1.html(f.read(), height=500, scrolling=True)
+    
+    with c_a2:
+        st.image("https://www.google.com/images/branding/googlelogo/2x/googlelogo_color_92x30dp.png", width=100)
+        st.write("### Google / Gmail Lure")
+        st.caption("Target: Personal Content & Drive")
+        if st.button("Preview Kit [GOOG]", key="prev_goog"):
+            with open("red_agent/assets/mockups/google_login.html", "r") as f:
+                st.components.v1.html(f.read(), height=500, scrolling=True)
+                
+    with c_a3:
+        st.write("### 🏦 Global Secure Bank")
+        st.write("### Corporate Banking Lure")
+        st.caption("Target: Financial Assets")
+        if st.button("Preview Kit [BANK]", key="prev_bank"):
+            with open("red_agent/assets/mockups/bank_login.html", "r") as f:
+                st.components.v1.html(f.read(), height=500, scrolling=True)
+                
+    st.divider()
+    st.info("💡 **Security Analysis:** These pages use visual cues to trick users. AI²-SED identifies the paths leading here.")
+
+def render_round_history_view():
+    """Renders the historical round records and DEI charts."""
+    st.subheader("📈 Round Records & DEI History")
+    st.write("Track the evolution of defensive effectiveness across adversarial simulations.")
+    
+    history_files = list_round_files()
+    if history_files:
+        history_rows = []
+        for f_round in history_files:
+            d_round = pd.read_csv(f_round)
+            r_id_numeric = int(f_round.stem.split("_")[-1]) if "_" in f_round.stem else 0
+            
+            t_col = "true_label" if "true_label" in d_round.columns else ("label" if "label" in d_round.columns else None)
+            if "blue_label" in d_round.columns and t_col:
+                dei_metric = (d_round["blue_label"] == d_round[t_col]).mean() * 100
+                p_catch = int(((d_round[t_col] == 1) & (d_round["blue_label"] == 1)).sum())
+                p_total = max(1, int((d_round[t_col] == 1).sum()))
+            else:
+                dei_metric = d_round["blue_label"].mean() * 100 if "blue_label" in d_round.columns else 0.0
+                p_catch, p_total = 0, 1
+            
+            history_rows.append({
+                "Round": r_id_numeric,
+                "Samples": len(d_round),
+                "DEI (%)": round(dei_metric, 2),
+                "Detection (%)": round((p_catch/p_total)*100, 1)
+            })
+        
+        df_history = pd.DataFrame(history_rows).sort_values("Round")
+        st.line_chart(df_history.set_index("Round")[["DEI (%)", "Detection (%)"]])
+        st.dataframe(df_history)
+    else:
+        st.info("No recorded adversarial rounds found.")
+
 # =========================================================
 # HELPERS
 # =========================================================
@@ -434,7 +527,7 @@ def run_round_safe(**kwargs):
 # STREAMLIT UI
 # =========================================================
 def main():
-    st.set_page_config(page_title="AI²-SED Application", layout="wide")
+    st.set_page_config(page_title="AI²-SED Application", layout="wide", initial_sidebar_state="collapsed")
     st.title("AI²-SED — AI vs AI Phishing Defense")
 
     # Environment checks (hidden from UI)
@@ -442,19 +535,38 @@ def main():
     if "red_agent" not in st.session_state:
         st.session_state.red_agent = AdaptiveRedAgent(t5_path=str(T5_DIR))
 
-    # Tabs definition
-    tabs = st.tabs([
-        "Detect Phishing",
-        "Generate (Red Agent)",
-        "Attack Assets (Kits)",
-        "Adversarial Round",
-        "Bulk Attack Simulation",
-        "Train Models",
-        "Evaluate Models",
-        "Round Records",
-        "Dashboard"
-    ])
-    tab_detect, tab_red, tab_assets, tab_round, tab_bulk, tab_train, tab_eval, tab_rounds, tab_dash = tabs
+    # Sidebar for Advanced Toggle
+    with st.sidebar:
+        st.title("🛡️ Advanced Lab")
+        st.write("Specialized modules for offensive assets and global intelligence.")
+        app_mode = st.radio("Navigation View", 
+                            ["Standard Workflow", "Attack Assets (Kits)", "Federated Intel Hub"],
+                            key="app_mode_selector")
+        st.divider()
+        st.info("💡 **Tip:** Use the 'Standard Workflow' for day-to-day detection and training.")
+
+    if app_mode == "Attack Assets (Kits)":
+        render_phishing_kits()
+    elif app_mode == "Federated Intel Hub":
+        st.subheader("Federated Learning Intelligence Hub")
+        render_global_threat_map()
+        st.divider()
+        render_live_threat_feed()
+        st.divider()
+        render_federated_sync_ui()
+    else:
+        # 1. Standard Workflow Navigation
+        tabs = st.tabs([
+            "Detect Phishing",
+            "Generate (Red Agent)",
+            "Adversarial Round",
+            "Bulk Attack Simulation",
+            "Train Models",
+            "Evaluate Models",
+            "Round Records",
+            "Dashboard"
+        ])
+        tab_detect, tab_red, tab_round, tab_bulk, tab_train, tab_eval, tab_rounds, tab_dash = tabs
 
     # 1. Detect Phishing (Live User Tool)
     with tab_detect:
@@ -583,40 +695,6 @@ def main():
                             st.caption(f"Generation Engine: {r_meth} | Target: Phishing (Legitimate-Looking Lure)")
                         else:
                             st.warning("Attack synthesis failed or content was blocked by safety filters.")
-
-    # 3. Attack Assets (Phishing Kits)
-    with tab_assets:
-        st.subheader("Phishing Kit Gallery: The Attacker's Arsenal")
-        st.write("These assets represent the 'Final Link' in the phishing chain—the deceptive pages where credentials are harvested.")
-        
-        c_a1, c_a2, c_a3 = st.columns(3)
-        
-        with c_a1:
-            st.image("https://upload.wikimedia.org/wikipedia/commons/4/44/Microsoft_logo.svg", width=50)
-            st.write("### Microsoft 365 Lure")
-            st.caption("Target: Corporate Credentials")
-            if st.button("Preview Kit [MSFT]", key="prev_msft"):
-                with open("red_agent/assets/mockups/microsoft_login.html", "r") as f:
-                    st.components.v1.html(f.read(), height=500, scrolling=True)
-        
-        with c_a2:
-            st.image("https://www.google.com/images/branding/googlelogo/2x/googlelogo_color_92x30dp.png", width=100)
-            st.write("### Google / Gmail Lure")
-            st.caption("Target: Personal Content & Drive")
-            if st.button("Preview Kit [GOOG]", key="prev_goog"):
-                with open("red_agent/assets/mockups/google_login.html", "r") as f:
-                    st.components.v1.html(f.read(), height=500, scrolling=True)
-                    
-        with c_a3:
-            st.write("### 🏦 Global Secure Bank")
-            st.write("### Corporate Banking Lure")
-            st.caption("Target: Financial Assets")
-            if st.button("Preview Kit [BANK]", key="prev_bank"):
-                with open("red_agent/assets/mockups/bank_login.html", "r") as f:
-                    st.components.v1.html(f.read(), height=500, scrolling=True)
-                    
-        st.divider()
-        st.info("💡 **Security Analysis:** These pages use visual cues (logos, colors, fonts) to trick users into trusting a non-verified entity. AI²-SED helps identify the *content-based* paths that lead to these pages.")
 
     # 3. Adversarial Round (Red vs Blue Interaction)
     with tab_round:
@@ -758,30 +836,6 @@ def main():
                 else:
                     st.warning("No adversarial round data found to merge.")
 
-        st.divider()
-        st.subheader("Federated Learning (Simulated)")
-        st.write("Exchange threat signatures with the Global Intelligence Hub to strengthen collective defense.")
-        
-        c_f1, c_f2 = st.columns(2)
-        with c_f1:
-            if st.button("🛰️ Sync with Global Hub", key="fed_sync_btn"):
-                added, total = sync_global_intel()
-                st.success(f"Sync Complete! Added {added} new trusted enterprise signatures from federated nodes.")
-                st.info(f"Local Whitelist now contains {total} verified domains.")
-        with c_f2:
-            st.write("Publish verified safe domains to help other nodes reduce false positives.")
-            new_pub = st.text_input("Domain to Publish", "my-safe-biz.com", key="fed_pub_input")
-            if st.button("📢 Publish to Hub", key="fed_pub_btn"):
-                if new_pub:
-                    intel = get_fed_intel()
-                    if new_pub not in intel["shared_signatures"]:
-                        intel["shared_signatures"].append(new_pub)
-                        intel["last_sync"] = datetime.now().isoformat()
-                        update_fed_intel(intel)
-                        st.success(f"Successfully published `{new_pub}` to the Global Intelligence Hub.")
-                    else:
-                        st.warning("Domain already exists in the Global Hub.")
-
     # 6. Evaluate Models (Static ML Benchmark)
     with tab_eval:
         st.subheader("Model Evaluation Hub")
@@ -825,47 +879,10 @@ def main():
 
     # 7. Rounds & Metrics (Historical Tracking)
     with tab_rounds:
-        st.subheader("📈 Round Records & DEI History")
-        st.write("Track the evolution of defensive effectiveness across adversarial simulations.")
-        
-        history_files = list_round_files()
-        if history_files:
-            history_rows = []
-            for f_round in history_files:
-                d_round = pd.read_csv(f_round)
-                r_id_numeric = int(f_round.stem.split("_")[-1]) if "_" in f_round.stem else 0
-                
-                # Robust DEI calculation
-                t_col = "true_label" if "true_label" in d_round.columns else ("label" if "label" in d_round.columns else None)
-                if "blue_label" in d_round.columns and t_col:
-                    dei_metric = (d_round["blue_label"] == d_round[t_col]).mean() * 100
-                    p_catch = int(((d_round[t_col] == 1) & (d_round["blue_label"] == 1)).sum())
-                    p_total = max(1, int((d_round[t_col] == 1).sum()))
-                else:
-                    dei_metric = d_round["blue_label"].mean() * 100 if "blue_label" in d_round.columns else 0.0
-                    p_catch, p_total = 0, 1
-                
-                history_rows.append({
-                    "Round": r_id_numeric,
-                    "Samples": len(d_round),
-                    "DEI (%)": round(dei_metric, 2),
-                    "Detection (%)": round((p_catch/p_total)*100, 1)
-                })
-            
-            df_history = pd.DataFrame(history_rows).sort_values("Round")
-            st.line_chart(df_history.set_index("Round")[["DEI (%)", "Detection (%)"]])
-            st.write("#### Detailed Historical Data")
-            st.dataframe(df_history)
-        else:
-            st.info("No recorded adversarial rounds found. Start by running an **Adversarial Round**.")
+        render_round_history_view()
 
     # 8. Dashboard (Executive Visualization)
     with tab_dash:
-        col_m, col_f = st.columns([2, 1])
-        with col_m:
-            render_global_threat_map()
-        with col_f:
-            render_live_threat_feed()
         st.divider()
         render_dashboard()
 
