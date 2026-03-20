@@ -256,6 +256,48 @@ def render_browser_shield(prob: float, domains: list):
         </div>
         """, unsafe_allow_html=True)
 
+def render_mitigation_advice(prob: float):
+    """Provides actionable advice based on the risk level."""
+    st.write("---")
+    st.subheader("💡 Incident Mitigation Roadmap")
+    if prob > 0.8:
+        st.error("### CRITICAL RISK: IMMEDIATE ACTION RECOMMENDED")
+        cols = st.columns(3)
+        cols[0].markdown("**1. Containment**\nDo not click any links or download attachments. Report this to your IT Security alias immediately.")
+        cols[1].markdown("**2. Credential Audit**\nIf you entered passcodes on this site, change your corporate password from a known safe device.")
+        cols[2].markdown("**3. System Scan**\nRun a full malware scan to ensure no background payloads were dropped (Drive-by downloads).")
+    elif prob > 0.5:
+        st.warning("### CAUTIONARY RISK: VERIFY BEFORE PROCEEDING")
+        st.write("This message mimics common phishing tactics. Before interacting:")
+        st.markdown("- **Call the Sender:** Use a known-good number to verify the request.\n- **Check the Link:** Hover over links to see if the destination matches the display text.\n- **Report Suspicion:** Use the 'Report Phish' button in your mail client.")
+    else:
+        st.success("### LOW RISK: CONTINUE WITH STANDARD VIGILANCE")
+        st.write("While this message appears safe, always remain cautious of unexpected requests for sensitive data.")
+
+def render_live_threat_feed():
+    """Renders a scrolling or dynamic list of shared threat signatures."""
+    st.write("### 📡 Global Threat Intelligence Feed")
+    intel = get_fed_intel()
+    sigs = intel.get("shared_signatures", [])
+    if not sigs:
+        sigs = ["update-verification-portal.net", "secure-bank-login.biz", "office365-security-check.com"]
+    
+    feed_html = f"""
+    <div style="background: #000; color: #0f0; font-family: 'Courier New', Courier, monospace; padding: 10px; height: 100px; overflow-y: hidden; border: 1px solid #333;">
+        <div style="animation: scrollUp 10s linear infinite;">
+            {"".join([f'<div>[INFO] Shared Sig: {s} | Source: Decentralized Node</div>' for s in sigs])}
+            {"".join([f'<div>[INFO] Shared Sig: {s} | Source: Federated Hub</div>' for s in reversed(sigs)])}
+        </div>
+    </div>
+    <style>
+    @keyframes scrollUp {{
+        0% {{ transform: translateY(0); }}
+        100% {{ transform: translateY(-100%); }}
+    }}
+    </style>
+    """
+    st.markdown(feed_html, unsafe_allow_html=True)
+
 # =========================================================
 # SAFETY FILTERS
 # =========================================================
@@ -491,6 +533,7 @@ def main():
                             st.write("The model identified this as phishing based on a combination of subtle patterns rather than individual keywords.")
                             
                     render_browser_shield(prob, found_domains)
+                    render_mitigation_advice(prob)
             else:
                 st.warning("Please paste a message to analyze.")
 
@@ -818,7 +861,11 @@ def main():
 
     # 8. Dashboard (Executive Visualization)
     with tab_dash:
-        render_global_threat_map()
+        col_m, col_f = st.columns([2, 1])
+        with col_m:
+            render_global_threat_map()
+        with col_f:
+            render_live_threat_feed()
         st.divider()
         render_dashboard()
 

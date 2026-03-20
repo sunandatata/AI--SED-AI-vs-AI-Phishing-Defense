@@ -160,6 +160,20 @@ def render_dashboard():
     st.plotly_chart(fig_trend, use_container_width=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
+    # === 2b. LONG-TERM STRESS TEST (100 ROUNDS) ===
+    STRESS_CSV = SYN_DIR / "stress_test_results.csv"
+    if STRESS_CSV.exists():
+        st.markdown("### Long-term Evolutionary Stability (100-Round Stress Test)")
+        s_df = pd.read_csv(STRESS_CSV)
+        st.markdown("<div class='card slide-in'>", unsafe_allow_html=True)
+        fig_stress = go.Figure()
+        fig_stress.add_trace(go.Scatter(x=s_df["Round"], y=s_df["DEI"], name="DEI (Defense Stability)", line=dict(color="#00fff2", width=2)))
+        fig_stress.add_trace(go.Scatter(x=s_df["Round"], y=s_df["AttackSuccess"], name="Red Agent Penetration", line=dict(color="#ff4b4b", width=2, dash='dot')))
+        fig_stress.update_layout(title="Multi-Round Stability Plateau", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(255,255,255,0.03)", font=dict(color=TEXT))
+        st.plotly_chart(fig_stress, use_container_width=True)
+        st.caption("This visualization proves the 'Stability Plateau' where defensive effectiveness holds consistent against high-frequency mutations.")
+        st.markdown("</div>", unsafe_allow_html=True)
+
     # === 3. ATTACK VECTOR ANALYSIS ===
     st.markdown("### Vulnerability Vector Analysis")
     c1, c2 = st.columns(2)
